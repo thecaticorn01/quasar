@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"github.com/psanford/wormhole-william/wormhole"
 )
@@ -107,5 +108,41 @@ func send(text, filePath string) {
 
 }
 func recv(code string) {
-	// Implement receiving logic here
+	var client wormhole.Client
+
+	fmt.Println("Connecting to network and verifying cryptographic keys...")
+	msg, err := client.Receive(ctx, code)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Handshake verification rejected: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch msg.Type {
+	case wormhole.TransferText:
+		body, err := io.ReadAll(msg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed reading incoming cipher data: %v\n", err)
+			os.Exit(1)
+		}
+
+		payloadStr := string(body)
+		fmt.Fprintf("\nDecrypted incoming text block successfully:\n--------------------\n%s\n--------------------", payloadStr)
+	case wormhole.TransferFile:
+		fmt.Printf("\nIncoming file detected: %s (%d bytes)\n", msg.Name, msg.TransferBytes64)
+
+		safeName := strings.ReplaceAll(msg.Name, "/", "_") // Prevent prefix attacks
+		outFile, err := os.OpenFile(safeName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed creating output file descriptor: %v\n", err)
+			os.Exit(1)
+		}
+		defer outFile.Close()
+
+		_, err = io.Copy(outFile, msg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Data pipe dropped during decryption: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("File flushed to local directory as: ./%s\n", safeName)
+	}
 }
